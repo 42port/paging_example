@@ -51,14 +51,21 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
-
+import com.google.firebase.FirebaseNetworkException
 
 val CardBackgroundColor = Color(0xFF9B9DA1)
 val CardTextColor = Color(0xFF28292A)
+val CardTimeColor = Color(0xFF6A6B6E)
+
 val customSelectionColors = TextSelectionColors(
     handleColor = Color.Blue,
     backgroundColor = Color.Yellow
 )
+
+const val COLLECTION_MARKET_NEWS = "market-news"
+const val NEWS_PAGE_SIZE = 5L
+const val NEWS_PAGE_REFRESH_GAP = 3
+
 
 // Sample data class representing a market news article
 // MarketNewsArticle.kt
@@ -67,23 +74,23 @@ data class MarketNewsArticle(
     val aiFinishedAt: Timestamp = Timestamp.now(),
     val aiProcessing: Boolean = false,
     val aiProcessingStartedAt: Timestamp = Timestamp.now(),
-    val eventDuration: String = "Weeks",
-    val eventId: Int = 136007862,
-    val eventImageURL: String = "https://s.yimg.com/rz/stage/p/yahoo_finance_en-US_h_p_finance_2.png",
-    val eventImpact: Int = 8,
-    val eventPublisher: String = "Yahoo",
-    val eventSource: String = "Finnhub News",
-    val eventSubType: String = "Quarterly Report",
-    val eventSummary: String = "Nvidia has announced its fiscal Q1 2025 earnings...",
+    val eventDuration: String = "",
+    val eventId: Int = 0,
+    val eventImageURL: String = "",
+    val eventImpact: Int = 0,
+    val eventPublisher: String = "",
+    val eventSource: String = "",
+    val eventSubType: String = "",
+    val eventSummary: String = "",
     val eventTime: Timestamp = Timestamp.now(),
-    val eventTitle: String = "6 Frugal Living Lessons From the Great Recession",
-    val eventType: String = "Financials",
-    val eventURL: String = "https://finnhub.io/api/news?id=12b9fe6a9934275fed30902a10394df30c68f786a8b9a092f0f215e212d8cded",
-    val stockTicker: String = "WMT",
+    val eventTitle: String = "",
+    val eventType: String = "",
+    val eventURL: String = "",
+    val stockTicker: String = "",
     val ttlDeleteTime: Timestamp = Timestamp.now(),
-    val whyDuration: String = "The positive outlook and continued AI demand suggest...",
-    val whyEventType: String = "The report details Nvidia's financial performance...",
-    val whyImpact: String = "Strong earnings beat and robust forward guidance..."
+    val whyDuration: String = "",
+    val whyEventType: String = "",
+    val whyImpact: String = ""
 )
 
 // ViewModel will be responsible for fetching data from Firestore and providing it to the UI
@@ -111,7 +118,7 @@ class SingleStockNewsViewModel : ViewModel() {
     // This is our "cursor" for pagination
     private var lastDocumentSnapshot: DocumentSnapshot? = null
 
-    fun loadArticles(stockTicker: String, pageSize: Long, forceRefresh: Boolean = false) {
+    fun loadArticles(stockTicker: String, forceRefresh: Boolean = false) {
         viewModelScope.launch {
             val currentState = (uiState.value as? UiState.Success)?.state ?: MarketNewsState()
 
@@ -132,11 +139,11 @@ class SingleStockNewsViewModel : ViewModel() {
             }
 
             try {
-                var query = db.collection("market-news")
+                var query = db.collection(COLLECTION_MARKET_NEWS)
                     .whereEqualTo("stockTicker", stockTicker)
                     .whereEqualTo("eventSource", "Finnhub News")
                     .orderBy("eventTime", Query.Direction.DESCENDING)
-                    .limit(pageSize)
+                    .limit(NEWS_PAGE_SIZE)
 
                 if (lastDocumentSnapshot != null) {
                     query = query.startAfter(lastDocumentSnapshot!!)
@@ -153,7 +160,7 @@ class SingleStockNewsViewModel : ViewModel() {
                     _uiState.value = UiState.Success(
                         MarketNewsState(
                             articles = currentArticles + newArticles,
-                            endReached = querySnapshot.size() < pageSize
+                            endReached = querySnapshot.size() < NEWS_PAGE_SIZE
                         )
                     )
                 } else {
@@ -162,7 +169,10 @@ class SingleStockNewsViewModel : ViewModel() {
                 }
             } catch (e: Exception) {
                 Log.e("SingleStockNewsViewModel", "Error loading articles", e)
-                val errorMessage = e.message ?: "An unknown error occurred."
+                val errorMessage = when (e) {
+                    is FirebaseNetworkException -> "Network error. Please check your connection."
+                    else -> "An unexpected error occurred. Please try again later."
+                }
                 if (lastDocumentSnapshot == null) {
                     // It failed on the first page, show a full-screen error
                     _uiState.value = UiState.Error(errorMessage)
@@ -186,7 +196,7 @@ fun SingleStockNewsFeed(
     val pullToRefreshState = rememberPullToRefreshState()
 
     LaunchedEffect(key1 = stockTicker) {
-        marketNewsViewModel.loadArticles(stockTicker = stockTicker, pageSize = 10, forceRefresh = true)
+        marketNewsViewModel.loadArticles(stockTicker = stockTicker, forceRefresh = true)
     }
 
     val isRefreshing = (uiState as? UiState.Success)?.state?.isLoadingInitialPage ?: false
@@ -194,10 +204,10 @@ fun SingleStockNewsFeed(
     PullToRefreshBox(
         isRefreshing = isRefreshing,
         onRefresh = {
-            marketNewsViewModel.loadArticles(stockTicker = stockTicker, pageSize = 10, forceRefresh = true)
+            marketNewsViewModel.loadArticles(stockTicker = stockTicker, forceRefresh = true)
         },
         state = pullToRefreshState,
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier.fillMaxSize(),
     ) {
         when (val state = uiState) {
             is UiState.Error -> {
@@ -221,14 +231,18 @@ fun SingleStockNewsFeed(
                         item {
                             when {
                                 marketNewsState.isLoadingNextPage -> {
-                                    Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                                        CircularProgressIndicator()
+                                    Box(modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp), contentAlignment = Alignment.Center) {
+                                        CircularProgressIndicator(color = Color.Green)
                                     }
                                 }
                                 marketNewsState.errorLoadingNextPage != null -> {
-                                    Column(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Column(modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text("Error: ${marketNewsState.errorLoadingNextPage}", color = Color.Red)
-                                        Button(onClick = { marketNewsViewModel.loadArticles(stockTicker, 10) }) {
+                                        Button(onClick = { marketNewsViewModel.loadArticles(stockTicker) }) {
                                             Text("Retry")
                                         }
                                     }
@@ -251,8 +265,8 @@ fun SingleStockNewsFeed(
                 // Add checks to ensure we aren't already loading and haven't reached the end
                 if (!currentSuccessState.isLoadingNextPage && !currentSuccessState.endReached) {
                     val totalItems = listState.layoutInfo.totalItemsCount
-                    if (totalItems > 0 && lastVisibleItemIndex >= totalItems - 3) {
-                        marketNewsViewModel.loadArticles(stockTicker = stockTicker, pageSize = 10)
+                    if (totalItems > 0 && lastVisibleItemIndex >= totalItems - NEWS_PAGE_REFRESH_GAP) {
+                        marketNewsViewModel.loadArticles(stockTicker = stockTicker)
                     }
                 }
             }
@@ -301,7 +315,7 @@ fun ShowArticleCard(article: MarketNewsArticle) {
                             Text(
                                 text = formattedDateString,
                                 fontSize = 14.sp,
-                                color = CardTextColor.copy(alpha = 0.8f) // Slightly less prominent
+                                color = CardTimeColor
                             )
                         }
                     }
