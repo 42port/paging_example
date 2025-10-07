@@ -48,9 +48,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
-// import androidx.compose.material3.ExperimentalMaterial3Api
-// import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
-// import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+
 
 val CardBackgroundColor = Color(0xFF9B9DA1)
 val CardTextColor = Color(0xFF28292A)
@@ -174,61 +175,67 @@ class SingleStockNewsViewModel : ViewModel() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SingleStockNewsFeed(
     stockTicker: String,
     marketNewsViewModel: SingleStockNewsViewModel = viewModel()
 ) {
     val uiState by marketNewsViewModel.uiState.collectAsStateWithLifecycle()
-    val listState = rememberLazyListState() // For tracking scroll position
+    val listState = rememberLazyListState()
+    val pullToRefreshState = rememberPullToRefreshState()
 
     LaunchedEffect(key1 = stockTicker) {
         marketNewsViewModel.loadArticles(stockTicker = stockTicker, pageSize = 10, forceRefresh = true)
     }
 
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
+    val isRefreshing = (uiState as? UiState.Success)?.state?.isLoadingInitialPage ?: false
+
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = {
+            marketNewsViewModel.loadArticles(stockTicker = stockTicker, pageSize = 10, forceRefresh = true)
+        },
+        state = pullToRefreshState,
+        modifier = Modifier.fillMaxSize()
     ) {
         when (val state = uiState) {
             is UiState.Error -> {
-                Text(text = "Error: ${state.message}", color = Color.Red)
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(text = "Error: ${state.message}", color = Color.Red)
+                }
             }
             is UiState.Success -> {
                 val marketNewsState = state.state
 
                 if (marketNewsState.articles.isEmpty() && !marketNewsState.isLoadingInitialPage) {
-                    Text(text = "No articles found for $stockTicker.")
-                }
-
-                LazyColumn(state = listState) {
-                    items(marketNewsState.articles) { article ->
-                        ShowArticleCard(article = article)
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(text = "No articles found for $stockTicker.")
                     }
+                } else {
+                    LazyColumn(state = listState) {
+                        items(marketNewsState.articles) { article ->
+                            ShowArticleCard(article = article)
+                        }
 
-                    item {
-                        // This block handles the footer of the list
-                        when {
-                            marketNewsState.isLoadingNextPage -> {
-                                Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                                    CircularProgressIndicator()
+                        item {
+                            when {
+                                marketNewsState.isLoadingNextPage -> {
+                                    Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                                        CircularProgressIndicator()
+                                    }
                                 }
-                            }
-                            marketNewsState.errorLoadingNextPage != null -> {
-                                Column(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Error: ${marketNewsState.errorLoadingNextPage}", color = Color.Red)
-                                    Button(onClick = { marketNewsViewModel.loadArticles(stockTicker, 10) }) {
-                                        Text("Retry")
+                                marketNewsState.errorLoadingNextPage != null -> {
+                                    Column(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("Error: ${marketNewsState.errorLoadingNextPage}", color = Color.Red)
+                                        Button(onClick = { marketNewsViewModel.loadArticles(stockTicker, 10) }) {
+                                            Text("Retry")
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
-
-                // Show a full-screen loader ONLY for the initial load
-                if (marketNewsState.isLoadingInitialPage) {
-                    CircularProgressIndicator()
                 }
             }
         }
@@ -239,14 +246,20 @@ fun SingleStockNewsFeed(
         .distinctUntilChanged()
         .collect { lastVisibleItemIndex ->
             if (lastVisibleItemIndex != null) {
-                val totalItems = listState.layoutInfo.totalItemsCount
-                if (totalItems > 0 && lastVisibleItemIndex >= totalItems - 3) {
-                    marketNewsViewModel.loadArticles(stockTicker = stockTicker, pageSize = 10)
+                val currentSuccessState = (uiState as? UiState.Success)?.state ?: return@collect
+
+                // Add checks to ensure we aren't already loading and haven't reached the end
+                if (!currentSuccessState.isLoadingNextPage && !currentSuccessState.endReached) {
+                    val totalItems = listState.layoutInfo.totalItemsCount
+                    if (totalItems > 0 && lastVisibleItemIndex >= totalItems - 3) {
+                        marketNewsViewModel.loadArticles(stockTicker = stockTicker, pageSize = 10)
+                    }
                 }
             }
         }
     }
 }
+
 
 @Composable
 fun ShowArticleCard(article: MarketNewsArticle) {

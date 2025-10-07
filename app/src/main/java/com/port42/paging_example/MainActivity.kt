@@ -36,7 +36,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MainScreen(modifier: Modifier = Modifier) {
-    val thisTicker = "IBM" // Example ticker symbol
+    val thisTicker = "AAPL" // Example ticker symbol
     Column(
         modifier = modifier
             .fillMaxSize()
